@@ -2,14 +2,17 @@ package com.wavesplatform.it.sync
 
 import com.typesafe.config.{Config, ConfigFactory}
 import com.wavesplatform.account.PrivateKeyAccount
+import com.wavesplatform.common.utils.EitherExt2
 import com.wavesplatform.it.NodeConfigs.Default
 import com.wavesplatform.it._
 import com.wavesplatform.it.api.SyncHttpApi._
 import com.wavesplatform.it.api.SyncMatcherHttpApi._
 import com.wavesplatform.it.api.{MatcherCommand, MatcherState}
 import com.wavesplatform.it.sync.config.MatcherPriceAssetConfig._
-import com.wavesplatform.transaction.Asset.Waves
-import com.wavesplatform.transaction.assets.exchange.{AssetPair, Order}
+import com.wavesplatform.matcher.AssetPairBuilder
+import com.wavesplatform.transaction.Asset.{IssuedAsset, Waves}
+import com.wavesplatform.transaction.assets.{IssueTransaction, IssueTransactionV1}
+import com.wavesplatform.transaction.assets.exchange.{AssetPair, Order, OrderType, OrderV1}
 import org.scalacheck.Gen
 
 import scala.concurrent.duration.DurationInt
@@ -41,27 +44,91 @@ class MultipleMatchersTestSuite extends MatcherSuiteBase {
   private val placesNumber  = 200
   private val cancelsNumber = placesNumber / 10
 
-  private val (issue1, issue2, assetPair1) = issueAssetPair(alice, 8, 8)
-  private val assetPair2                   = AssetPair(assetPair1.amountAsset, Waves)
-  private val assetPair3                   = AssetPair(assetPair1.priceAsset, Waves)
-  private val assetPairs                   = Seq(assetPair1, assetPair2, assetPair3)
+  private val issue1 = IssueTransactionV1
+    .selfSigned(
+      sender = alice,
+      name = "Asset1".getBytes(),
+      description = "Asset1 description".getBytes(),
+      quantity = Long.MaxValue,
+      decimals = 8,
+      reissuable = false,
+      fee = issueFee,
+      timestamp = System.currentTimeMillis()
+    )
+    .explicitGet()
 
-  // Issue assets by Alice
-  private val assetIds = {
-    val txs = Seq(issue1, issue2).map(x => matcher1Node.broadcastRequest(x.json()).id -> x)
-    txs.map { case (id, info) => nodes.waitForTransaction(id).id -> info }.toMap
-  }
+  private val issue2 = IssueTransactionV1
+    .selfSigned(
+      sender = alice,
+      name = "Asset2".getBytes(),
+      description = "Asset2 description".getBytes(),
+      quantity = Long.MaxValue,
+      decimals = 8,
+      reissuable = false,
+      fee = issueFee,
+      timestamp = System.currentTimeMillis()
+    )
+    .explicitGet()
 
-  // Share assets with Bob
-  {
-    val xs = assetIds.map { case (id, info) => node.broadcastTransfer(alice, bob.address, info.quantity / 2, minFee, Some(id), None).id }
-    xs.foreach(nodes.waitForTransaction)
-  }
+  private val issue3 = IssueTransactionV1
+    .selfSigned(
+      sender = alice,
+      name = "Asset3".getBytes(),
+      description = "Asset3 description".getBytes(),
+      quantity = Long.MaxValue,
+      decimals = 8,
+      reissuable = false,
+      fee = issueFee,
+      timestamp = System.currentTimeMillis()
+    )
+    .explicitGet()
+
+  private val assetPair1 = mkPair(issue1, issue2)
+  private val assetPair2 = AssetPair(IssuedAsset(issue1.assetId()), Waves)
+  private val assetPair3 = AssetPair(IssuedAsset(issue2.assetId()), Waves)
+
+  private val assetPairs = Seq(assetPair1, assetPair2, assetPair3)
 
   private val aliceOrders = mkOrders(alice)
   private val bobOrders   = mkOrders(alice)
-  private val orders      = aliceOrders ++ bobOrders
-  private val lastOrder   = orderGen(matcher, alice, assetPairs).sample.get
+
+  private val lastOrderPair = mkPair(issue1, issue3)
+  private val orders      = {
+    val o1 = OrderV1(
+      sender = alice,
+      matcher = matcher,
+      pair = lastOrderPair,
+      orderType = OrderType.SELL,
+      amount = 10000L,
+      price = 10000L,
+      timestamp = System.currentTimeMillis(),
+      expiration = System.currentTimeMillis() + 1.day.toMillis,
+      matcherFee = matcherFee
+    )
+
+    aliceOrders ++ bobOrders // :+
+  }
+
+//  private val lastOrder = {
+//
+//
+//    // sub + cpunter
+//    orderGen(matcher, alice, Seq(lastOrderPair)).sample.get
+//  }
+
+  override protected def beforeAll(): Unit = {
+    super.beforeAll()
+
+    // Issue assets by Alice
+    val assetIds = {
+      val txs = Seq(issue1, issue2, issue3).map(x => matcher1Node.broadcastRequest(x.json()).id -> x)
+      txs.map { case (id, info) => nodes.waitForTransaction(id).id -> info }.toMap
+    }
+
+    // Share assets with Bob
+    val xs = assetIds.map { case (id, info) => node.broadcastTransfer(alice, bob.address, info.quantity / 2, minFee, Some(id), None).id }
+    xs.foreach(nodes.waitForTransaction)
+  }
 
   "Place, fill and cancel a lot of orders" in {
     val alicePlaces = aliceOrders.map(MatcherCommand.Place(matcher1Node, _))
@@ -101,4 +168,10 @@ class MultipleMatchersTestSuite extends MatcherSuiteBase {
   private def clean(state: MatcherState): MatcherState = state.copy(
     snapshots = state.snapshots.map { case (k, _) => k -> 0L }
   )
+
+  private def mkPair(issue1: IssueTransaction, issue2: IssueTransaction): AssetPair = {
+    val p = AssetPair(IssuedAsset(issue1.assetId()), IssuedAsset(issue1.assetId()))
+    val x = AssetPairBuilder.assetIdOrdering.compare(Some(issue1.assetId()), Some(issue2.assetId()))
+    if (x > 0) p else p.reverse
+  }
 }
