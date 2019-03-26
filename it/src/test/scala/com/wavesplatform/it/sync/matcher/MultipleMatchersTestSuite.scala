@@ -83,6 +83,8 @@ class MultipleMatchersTestSuite extends MatcherSuiteBase {
       matcher1Node.waitOrderProcessed(lastOrder.assetPair, lastOrder.idStr())
       matcher2Node.waitOrderProcessed(lastOrder.assetPair, lastOrder.idStr())
     }
+
+    Thread.sleep(10000)
   }
 
   "States on both matcher should be equal" in {
