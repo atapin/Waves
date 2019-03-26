@@ -13,6 +13,7 @@ import org.scalacheck.Gen
 
 import scala.concurrent.duration.DurationInt
 import scala.util.Random
+import scala.util.control.NonFatal
 
 // Works only with kafka
 class MultipleMatchersTestSuite extends MatcherSuiteBase {
@@ -76,15 +77,21 @@ class MultipleMatchersTestSuite extends MatcherSuiteBase {
   }
 
   "Wait until all requests are processed" in {
-    val offset1 = matcher1Node.waitForStableOffset(10, 100, 200.millis)
-    matcher2Node.waitFor[Long](s"Offset is $offset1")(_.getCurrentOffset, _ == offset1, 2.seconds)
+    try {
+      val offset1 = matcher1Node.waitForStableOffset(10, 100, 200.millis)
+      matcher2Node.waitFor[Long](s"Offset is $offset1")(_.getCurrentOffset, _ == offset1, 2.seconds)
 
-    withClue("Last command processed") {
-      matcher1Node.waitOrderProcessed(lastOrder.assetPair, lastOrder.idStr())
-      matcher2Node.waitOrderProcessed(lastOrder.assetPair, lastOrder.idStr())
+      withClue("Last command processed") {
+        matcher1Node.waitOrderProcessed(lastOrder.assetPair, lastOrder.idStr())
+        matcher2Node.waitOrderProcessed(lastOrder.assetPair, lastOrder.idStr())
+      }
+
+      Thread.sleep(10000)
+    } catch {
+      case NonFatal(e) =>
+        log.info(s"Last offsets: node1=${matcher1Node.getLastOffset}, node2=${matcher2Node.getLastOffset}")
+        throw e
     }
-
-    Thread.sleep(10000)
   }
 
   "States on both matcher should be equal" in {
