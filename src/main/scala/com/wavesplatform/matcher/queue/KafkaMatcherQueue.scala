@@ -85,7 +85,6 @@ class KafkaMatcherQueue(settings: Settings)(implicit mat: ActorMaterializer) ext
   )
 
   override def startConsume(fromOffset: QueueEventWithMeta.Offset, process: QueueEventWithMeta => Unit): Unit = {
-    log.info(s"Start consuming from $fromOffset")
     var currentOffset  = fromOffset // Store locally to know a previous processed offset when the source is restarted
     val topicPartition = new TopicPartition(settings.topic, 0)
 
@@ -96,6 +95,7 @@ class KafkaMatcherQueue(settings: Settings)(implicit mat: ActorMaterializer) ext
         randomFactor = 0.2,
         maxRestarts = -1
       ) { () =>
+        log.info(s"Start consuming from $currentOffset")
         Consumer
           .plainSource(consumerSettings, Subscriptions.assignmentWithOffset(topicPartition -> currentOffset))
           .mapMaterializedValue(consumerControl.set)
